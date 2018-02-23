@@ -399,9 +399,8 @@ flags.DEFINE_string('result_storage', None,
 # Fix rate
 flags.DEFINE_boolean('enable_fix_rate', False,
                      'Enable fix rate for remote Send and Recv operations')
-flags.DEFINE_float('fix_rate_ewa_alpha', 0.1, '')
-flags.DEFINE_float('fix_rate_std_coefficient', 1.0, '')
-flags.DEFINE_float('fix_rate_std_threshold_in_ms', 50, '')
+flags.DEFINE_integer('fix_rate_interval_in_ms', 10, '')
+flags.DEFINE_integer('fix_rate_message_size_in_kb', 1024, '')
 
 
 platforms_util.define_platform_params()
@@ -514,6 +513,9 @@ def create_config_proto(params):
   if params.variable_update == 'horovod':
     import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
     config.gpu_options.visible_device_list = str(hvd.local_rank())
+  config.enable_fix_rate = params.enable_fix_rate
+  config.fix_rate_interval_in_ms = params.fix_rate_interval_in_ms
+  config.fix_rate_message_size = params.fix_rate_message_size_in_kb * 1024
 
   return config
 
@@ -549,17 +551,14 @@ def benchmark_one_step(sess,
                        trace_filename,
                        image_producer,
                        params,
-                       remote_rendezvous_tracker_options,
                        summary_op=None):
   """Advance one step of benchmarking."""
   if trace_filename and step == -1:
     run_options = tf.RunOptions(
-      trace_level=tf.RunOptions.FULL_TRACE,
-      remote_rendezvous_tracker_options=remote_rendezvous_tracker_options)
+      trace_level=tf.RunOptions.FULL_TRACE)
     run_metadata = tf.RunMetadata()
   else:
-    run_options = tf.RunOptions(
-      remote_rendezvous_tracker_options=remote_rendezvous_tracker_options)
+    run_options = None
     run_metadata = None
   summary_str = None
   start_time = time.time()
@@ -1406,16 +1405,6 @@ class BenchmarkCNN(object):
       log_fn('Running warm up')
       local_step = -1 * self.num_warmup_batches
 
-      if self.params.enable_fix_rate:
-        remote_rendezvous_tracker_options = config_pb2.RemoteRendezvousTrackerOptions(
-          state=config_pb2.RemoteRendezvousTrackerOptions.TRACE_INTERVAL,
-          ema_alpha=self.params.fix_rate_ewa_alpha,
-          std_coefficient=self.params.fix_rate_std_coefficient,
-          std_threshold_in_ms=self.params.fix_rate_std_threshold_in_ms)
-      else:
-        remote_rendezvous_tracker_options = config_pb2.RemoteRendezvousTrackerOptions(
-          state=config_pb2.RemoteRendezvousTrackerOptions.OFF)
-
       if (self.single_session or (self.params.cross_replica_sync and
                                   self.params.job_name) or
           self.params.variable_update == 'horovod'):
@@ -1441,13 +1430,6 @@ class BenchmarkCNN(object):
             assert global_step_watcher.start_time == 0
             sess.run([execution_barrier])
 
-          if self.params.enable_fix_rate:
-            remote_rendezvous_tracker_options = config_pb2.RemoteRendezvousTrackerOptions(
-              state=config_pb2.RemoteRendezvousTrackerOptions.FIX_RATE,
-              ema_alpha=self.params.fix_rate_ewa_alpha,
-              std_coefficient=self.params.fix_rate_std_coefficient,
-              std_threshold_in_ms=self.params.fix_rate_std_threshold_in_ms)
-
           header_str = ('Step\tImg/sec\t' +
                         self.params.loss_type_to_report.replace('/', ' '))
           if self.params.print_training_accuracy or self.params.forward_only:
@@ -1466,8 +1448,7 @@ class BenchmarkCNN(object):
             sess, fetches, local_step,
             self.batch_size * (self.num_workers
                                if self.single_session else 1), step_train_times,
-            self.trace_filename, image_producer, self.params,
-            remote_rendezvous_tracker_options, fetch_summary)
+            self.trace_filename, image_producer, self.params, fetch_summary)
         if summary_str is not None and is_chief:
           sv.summary_computed(sess, summary_str)
         local_step += 1
