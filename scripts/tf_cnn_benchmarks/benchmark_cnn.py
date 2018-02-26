@@ -401,6 +401,7 @@ flags.DEFINE_boolean('enable_fix_rate', False,
                      'Enable fix rate for remote Send and Recv operations')
 flags.DEFINE_integer('fix_rate_interval_in_ms', 10, '')
 flags.DEFINE_integer('fix_rate_message_size_in_kb', 1024, '')
+flags.DEFINE_boolean('fix_rate_send_empty_message', True, '')
 
 
 platforms_util.define_platform_params()
@@ -516,6 +517,7 @@ def create_config_proto(params):
   config.enable_fix_rate = params.enable_fix_rate
   config.fix_rate_interval_in_ms = params.fix_rate_interval_in_ms
   config.fix_rate_message_size = params.fix_rate_message_size_in_kb * 1024
+  config.fix_rate_send_empty_message = params.fix_rate_send_empty_message
 
   return config
 
